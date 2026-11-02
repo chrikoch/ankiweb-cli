@@ -1,0 +1,27 @@
+# Anki collection download: source review
+
+Reviewed Anki 24.11 at commit `8e5efc597dd61a91cea21beacddf312ad1ffea9b` on 2026-11-02. This is a source analysis of the open-source Anki client and its `SimpleServer`, not an observed AnkiWeb session or a guarantee about other Anki versions. The project currently allows `anki>=24.0` without an upper bound; the baseline tests used 26.9.3, which was not reviewed here. Protocol behavior must be tested for the selected supported versions before implementation.
+
+## Calls and requests
+
+The modern client sends HTTP POST requests to `/sync/<method>` with an `anki-sync` header and a zstd-compressed body ([client](https://github.com/ankitects/anki/blob/8e5efc597dd61a91cea21beacddf312ad1ffea9b/rslib/src/sync/http_client/mod.rs), [protocol](https://github.com/ankitects/anki/blob/8e5efc597dd61a91cea21beacddf312ad1ffea9b/rslib/src/sync/collection/protocol.rs)). POST alone does not imply a collection upload; the method and server behavior matter.
+
+| Operation | Client behavior in inspected source | Implications |
+| --- | --- | --- |
+| `sync_login` | Sends credentials in the `hostKey` request and receives an hkey ([login](https://github.com/ankitects/anki/blob/8e5efc597dd61a91cea21beacddf312ad1ffea9b/rslib/src/sync/login.rs)). | Authentication, not a collection or media upload. Protect the password and hkey; no claim is made about proprietary server-side effects. |
+| Collection `sync_collection` | Fetches `meta`, then may perform normal sync, including sending chunks and processing deletions ([normal sync](https://github.com/ankitects/anki/blob/8e5efc597dd61a91cea21beacddf312ad1ffea9b/rslib/src/sync/collection/normal.rs)). | Not an acceptable prerequisite for the new command: it can modify the remote collection, even when media sync is disabled. |
+| `sync_status` | Can fetch `meta` and return a redirect, but may instead return a local or cached result without a request ([backend](https://github.com/ankitects/anki/blob/8e5efc597dd61a91cea21beacddf312ad1ffea9b/rslib/src/backend/sync.rs)). | A possible investigation point, not a reliable unconditional redirect-discovery API. The `meta` path handles a 308 and retries at the returned endpoint ([meta](https://github.com/ankitects/anki/blob/8e5efc597dd61a91cea21beacddf312ad1ffea9b/rslib/src/sync/collection/meta.rs)). |
+| `full_upload_or_download(upload=False, server_usn=None)` | The backend selects `full_download`; the client issues `download`, checks the received collection, and replaces its local collection ([backend](https://github.com/ankitects/anki/blob/8e5efc597dd61a91cea21beacddf312ad1ffea9b/rslib/src/backend/sync.rs), [download](https://github.com/ankitects/anki/blob/8e5efc597dd61a91cea21beacddf312ad1ffea9b/rslib/src/sync/collection/download.rs)). | The inspected branch does not call full upload or start media sync when `server_usn` is absent. It needs an isolated local collection and a resolved endpoint. No end-to-end request trace has yet established that this works directly with AnkiWeb. |
+| `full_upload_or_download(..., server_usn=<value>)` | After a successful full sync, the backend starts background media synchronization when a server USN is present ([backend](https://github.com/ankitects/anki/blob/8e5efc597dd61a91cea21beacddf312ad1ffea9b/rslib/src/backend/sync.rs)). | Passing the USN as the existing CLI does can start ordinary media sync; it must not be reused as-is for this backup. |
+
+In a normal sync, `/sync/applyGraves` can transmit local card, note and deck deletions for application on the server; `/sync/applyChanges` and `/sync/applyChunk` send collection changes ([deletion sequence](https://github.com/ankitects/anki/blob/8e5efc597dd61a91cea21beacddf312ad1ffea9b/rslib/src/sync/collection/start.rs), [server handlers](https://github.com/ankitects/anki/blob/8e5efc597dd61a91cea21beacddf312ad1ffea9b/rslib/src/sync/http_server/handlers.rs)). A full upload uses the separate `/sync/upload` method.
+
+## Server-side effects and limitations
+
+The inspected `SimpleServer` download handler aborts an active stateful sync before opening and downloading the collection ([handler](https://github.com/ankitects/anki/blob/8e5efc597dd61a91cea21beacddf312ad1ffea9b/rslib/src/sync/http_server/handlers.rs)). Its `server_download()` increments the server-side collection USN and closes the collection at the requested schema version before reading it ([download](https://github.com/ankitects/anki/blob/8e5efc597dd61a91cea21beacddf312ad1ffea9b/rslib/src/sync/collection/download.rs)). Thus even a download request is not strictly free of server-side changes or interference. This is evidence about the inspected open-source server only; actual AnkiWeb behavior remains unverified.
+
+The existing CLI's `do_full_sync()` first invokes `sync_collection`, then passes `server_media_usn` to full sync. Both details conflict with treating that function as a download-only building block. The apparent `upload=False, server_usn=None` alternative is a candidate for further testing, not an approved design or a complete solution for redirects and media.
+
+## Follow-up
+
+The next plan items must independently establish download-only media access and shard redirects with observable requests, evaluate consistency and completeness, and determine whether the resulting approach meets the requirements. Synthetic network tests must reject collection uploads, ordinary bidirectional sync, media uploads and remote deletions. No credentials or real AnkiWeb collection were used in this review.

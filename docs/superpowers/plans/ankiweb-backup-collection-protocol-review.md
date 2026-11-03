@@ -22,6 +22,14 @@ The inspected `SimpleServer` download handler aborts an active stateful sync bef
 
 The existing CLI's `do_full_sync()` first invokes `sync_collection`, then passes `server_media_usn` to full sync. Both details conflict with treating that function as a download-only building block. The apparent `upload=False, server_usn=None` alternative is a candidate for further testing, not an approved design or a complete solution for redirects and media.
 
+## Scope of the intended read-only guarantee
+
+For this backup, "read-only" means that the client must not upload collection or media changes, request remote deletions, or use ordinary bidirectional sync. This is a requirement on the requests the eventual backup client sends; it is not a guarantee that the remote server performs no writes in response to permitted requests. No production backup client exists yet, so its request restrictions still need network-level tests, including retries and redirects.
+
+The inspected Anki `SimpleServer` is a concrete counterexample to a stronger guarantee of zero server-side effects: the 24.11 source increments the collection USN and aborts an active stateful sync during a collection download. A [local test with 26.09.3](ankiweb-backup-consistency-review.md) also observed the collection modification timestamp changing. If a listed media file is missing from server storage, a media download request can remove the file's index entry and return a conflict; the [media review](ankiweb-backup-media-protocol-review.md) records the source and a local reproduction. These cases do not involve the client requesting an upload or deletion, but they can still change server state or interfere with another sync.
+
+The local tests exercised synthetic data against the open-source server and simulated a shard redirect. They do not establish whether the proprietary AnkiWeb service behaves the same way, or whether all server-side effects have been identified. The actual AnkiWeb redirect and request sequence remain a separate acceptance check. Keep this limitation visible in the command's eventual help and documentation; do not describe the operation as guaranteed to leave all server state unchanged.
+
 ## Follow-up
 
 The next plan items must independently establish download-only media access and shard redirects with observable requests, evaluate consistency and completeness, and determine whether the resulting approach meets the requirements. Synthetic network tests must reject collection uploads, ordinary bidirectional sync, media uploads and remote deletions. No credentials or real AnkiWeb collection were used in this review.

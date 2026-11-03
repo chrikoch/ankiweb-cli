@@ -36,8 +36,8 @@ All six assertions passed. The probe scripts under `/tmp` are temporary and may 
 - A local missing-file test produced an HTTP 409 and removed the server media-index entry **without advancing the media USN**. A USN-only check misses that index change if it is not otherwise observed. Other out-of-band server storage changes may also be invisible; actual AnkiWeb behavior is unknown.
 - Checksums verify bytes against a particular listing, not that the listing is complete or belongs to the same point in time as the downloaded collection. A listing cursor and server index are not independent proof of all files physically present.
 - The real AnkiWeb shard flow and exact metadata semantics remain unverified without the separate test account recorded as an acceptance requirement. A successful test would still not establish behavior for all future versions or concurrent operations.
-- The code's existing `anki>=24.0` dependency has no upper bound. Choose and test a supported range before depending on any of these details.
+- The code's existing `anki>=24.0` dependency has no upper bound. Test the implementation initially against 24.11 and 26.9.3 and document actual support after implementation and acceptance tests; the test points do not establish support for every intervening version.
 
-## Decision still required
+## Decision following investigation
 
-Detected changes and request or integrity failures must retry according to the requirements. The requirements deliberately leave the treatment of **undetectable** inconsistencies open. Before implementation, agree with the user whether a backup may be emitted with clearly documented residual limits or whether it must fail when the required consistency cannot be proven, and assess the practical consequences against the requirement for an unattended backup. No behavior is selected in this review.
+The user agreed that a backup may complete when all available checks pass, even though a consistent and complete snapshot cannot be proven. Document the residual uncertainty. Detected changes, request failures and failed integrity or completeness checks still fail the attempt and trigger a retry according to the requirements.

@@ -1,0 +1,73 @@
+# AnkiWeb backup: feasibility findings and proposed design
+
+Status: **reviewed feasibility findings and design**, with the explicit gaps and later acceptance checks below. This document synthesizes the investigations listed in the [implementation plan](2026-11-02-ankiweb-backup.md). The requirements remain authoritative. The user approved the basic approach of a small custom protocol client and the listed tradeoffs; subsequent plan points resolve remaining requirement gaps and refine implementation tasks. AnkiWeb access and Raspberry Pi runtime compatibility remain unverified.
+
+## Goal and constraints
+
+Produce one modern collection package with all synced collection data and media per successful unattended run. Never upload collection changes or media, request remote deletions, or run ordinary bidirectional sync. Preserve existing packages and existing local snapshot commands. The user has chosen a plaintext credentials file for the new command with restrictive access permissions; other commands retain the keyring.
+
+These restrictions govern client requests, not all server-side effects. The inspected Anki server may change metadata on download, abort a concurrent sync or remove a missing media file's index entry. Actual AnkiWeb behavior is unverified. See the [collection protocol](ankiweb-backup-collection-protocol-review.md) and [media](ankiweb-backup-media-protocol-review.md) reviews.
+
+## Requirement coverage and evidence
+
+| Requirement | Proposed mechanism or evidence | Gap or acceptance check |
+| --- | --- | --- |
+| Required output directory and credentials-file paths | Validate paths and credentials before work; include `--output-dir` and `--credentials-file`. The user agreed to TOML with an `[ankiweb]` section, Linux mode checks and user-managed permissions on Windows/macOS. | Implement and test Linux mode checks; document the lack of automatic permission checks on Windows/macOS. |
+| Unattended Raspberry Pi use, including reboot and cron | Read credentials from the selected plaintext file; no keyring unlock or interactive prompt for the backup command. | Real Pi, reboot and cron tests remain open; ARM/glibc compatibility below. |
+| Do not expose credentials | Restrict the file; keep password and authentication token out of progress, error output, package and logs. | Implement and test redaction for exceptions, redirects and retries; exclude the credentials file from ordinary file backups as documented. |
+| Collection, scheduling, review history, all decks | Download the full collection into an isolated workspace; export through Anki's `export_collection_package(..., include_media=True, legacy=False)`. A synthetic backend roundtrip covered representative data. | Exact compatibility with AnkiWeb and complete remote state is not established; current Desktop UI import remains an acceptance check. |
+| All remote media, including unreferenced | Enumerate the remote media index independently of note references; retrieve and verify all listed live entries, handling pages and partial ZIPs. Local probes covered 1,004 files. | An index listing alone cannot prove all server filesystem contents; behavior for every server state or filename is unknown. The local server query has no explicit USN ordering; a comparison with the server-maintained count may detect omissions, but the count may itself be inaccurate and neither it nor monotonic pages establishes completeness in every case. See `ankiweb-backup-platform-and-paging-review.md`. The user accepts documented residual uncertainty when all available checks pass; the completeness of the server index is still unverified. |
+| No upload, deletion requests or bidirectional sync | Restrict backup-side network operations to login, metadata, collection download, media begin/list/download and media count check. Deny all other requests in integration tests, including error and redirect paths. | No production client exists; real AnkiWeb request flow is unverified. Allowed requests can still cause server-side side effects described above. |
+| Detect remote changes and fail/retry | Candidate comparisons use a media USN before/after, listing hashes and downloaded collection metadata versus subsequent server metadata. | Matching checks do not prove an atomic snapshot; downloaded collection metadata and server semantics must be checked for the chosen client. A competing collection download can cause a false positive. |
+| Three total attempts, 5-second exponential delay, configurable 60-second default cap | Isolate and clean each failed attempt, then retry within configured total attempts. Delay before retry number `n` is `min(max_delay, 5 * 2**(n-1))` seconds. | Propose rejecting a maximum delay below five seconds so the first retry still waits five seconds; confirm the option bounds in the detailed plan and test retry behavior deterministically. |
+| UTC filename, collision handling, keep previous backups | Validate a temporary package and prefer a non-replacing atomic publication operation. If unavailable, the user accepts exclusively creating the final file and copying the validated package. | Test operations on actual target filesystems and under concurrent invocations. The fallback can expose an incomplete final file during copying or after interruption. Its exclusive-creation guarantee depends on the filesystem; Anki's exporter may overwrite its target and cannot be used directly for final publication. |
+| Progress and failures on stdout; no false success | Print stages, each media filename, errors and completed path without credentials; nonzero exit if all attempts fail. | Click normally writes errors to stderr; test the new command's specified stdout behavior explicitly. |
+| Import with current Anki Desktop, explain local media behavior and local snapshots | Use Anki's modern exporter; preserve local `backup list` and `backup restore` commands. | Test current Desktop import and document that extra local media remains, plus the separate deliberate nature of later AnkiWeb upload. |
+| 80% coverage and protected existing behavior | Existing suite measured 83% statement coverage before implementation; retain regression tests. | Run full suite and coverage after changes, with meaningful network and recovery tests. |
+
+The user resolved the two demonstrated filename limitations: names that require
+legacy normalization are out of scope and cause a clear failure; distinct names
+that collide on the executing filesystem also cause a clear failure rather than
+renaming or losing a file. On case-sensitive Linux, the official Anki 26.9.3
+export and backend restore preserved both `Test.png` and `test.png` in a
+synthetic probe. Document that restoring such a package on a case-insensitive
+filesystem may not preserve both names.
+
+The remaining real-service, target-device and desktop checks in the table are
+acceptance gates, not evidence already obtained. Implementation and its tests
+must still establish the chosen redirect policy, platform publication behavior,
+and recovery from ambiguous publication errors. None of these gaps authorizes
+ordinary synchronization or a weaker check when a required check fails.
+
+## Proposed implementation with agreed protocol approach
+
+A plausible arrangement separates these responsibilities without committing to final file names:
+
+1. **CLI and credentials:** Parse a required credentials-file path. The user agreed to a TOML document with `username` and `password` under `[ankiweb]`. Reject missing or malformed files, and on Linux files with group/other access; redact secrets. On Windows/macOS, document that users must restrict permissions themselves and that the command does not verify them. Keep the plaintext file outside the package and explain its protection limits.
+2. **Transport and login:** Implement a small project-specific client for the necessary Anki protocol requests using existing HTTP and compression libraries. Authenticate and discover the shard without normal sync, permit only necessary operations, validate redirect destinations and enforce a redirect limit before resending authentication, and keep errors free of credentials. The user explicitly agreed to this custom approach; the exact libraries, interfaces and trusted destination policy remain to be specified and tested. The high-level fastanki media sync and its existing recursive redirect handling are not suitable as-is.
+3. **Isolated attempt:** Create a temporary collection and media folder for each attempt; download the collection and enumerate/download media. Validate listed names, batches, missing entries, partial ZIPs and checksums. Never reuse the existing `do_full_sync()` path: it starts ordinary sync and may start ordinary media sync.
+4. **Change detection and package:** Apply the planned checks. Report any detected change or failed integrity or completeness check as a failed attempt. After all available checks pass, export and validate a modern package in the temporary workspace, then publish without replacement. Prefer atomic publication; where unavailable, the user accepts an exclusive-create copy that can leave an incomplete final file after interruption. Document that consistency and completeness cannot be proven.
+5. **Retry and reporting:** Run each attempt independently; report per-file progress and errors on stdout without credentials, use the specified capped exponential backoff, and clean temporary artifacts. Only report a completed package after publication.
+
+The user approved a small custom protocol client and the required control logic using existing HTTP and compression libraries. The [detailed design](ankiweb-backup-detailed-design.md) records the reviewed approach and the open items to resolve in the following plan steps. No examined tool has been demonstrated to satisfy the full requirements on its own.
+
+## Version and platform proposal
+
+The local protocol/server and package roundtrip probes have now run with PyPI `anki==24.11` and `anki==26.9.3` on x86_64 Linux with Python 3.13.5; the existing 77-test suite also passed with 24.11. Select **24.11 and 26.9.3 as initial implementation and CI test points**, with 26.9.3 the primary Pi candidate. These are test points, not proof of support for `anki>=24.0`, every intervening or future version, or the Raspberry Pi, and do not forbid other versions. Keep the existing dependency constraint for unrelated commands. Establish and document support only after implementation and target-platform acceptance tests.
+
+[PyPI's 26.9.3 files](https://pypi.org/project/anki/26.9.3/#files) include a Linux ARM64 wheel tagged `manylinux_2_35_aarch64`, requiring glibc 2.35 or later; the listed release files do not include a Linux 32-bit ARM wheel or source distribution. The user's target reports Debian 13.7, `aarch64`, glibc 2.41 and Python 3.13.5, so it matches the wheel's architecture and glibc floor and the project's Python floor. This is a metadata-based compatibility assessment, not an installation, execution, reboot or cron test on the Pi. Do not silently narrow Raspberry Pi support to ARM64 or assume a source build works. If a target cannot support the candidate package, investigate alternatives and obtain agreement before changing the requirement. `fastanki==0.0.6` transport was tested on x86_64 only; its dependencies and target availability require separate verification.
+
+### Broader platforms and CI proposal
+
+The user wants the project to remain broadly usable and asks that other systems be considered in the CI/build process. The existing workflow tests only Ubuntu x86-64 on Python 3.11 and 3.12; the feasibility probes ran on Linux x86-64 with Python 3.13. Neither constitutes evidence of Windows, macOS or ARM runtime support. Anki 26.9.3 also publishes wheels for Linux x86-64, Windows x86-64/ARM64 and macOS x86-64/ARM64; wheel availability alone does not verify this project's dependencies or behavior.
+
+Retain the existing Python 3.11 and 3.12 checks and add Python 3.13 coverage. The user wants Windows and macOS builds and automated CI checks, plus Linux ARM64 where a suitable runner is available. Focus manual testing on Linux and the target Pi, and document that Windows and macOS receive less manual testing. Test package installation, credential-file handling, Linux permission checks and collision-safe publication as applicable; document user-managed permissions and the absence of automatic checks on Windows/macOS. Run the headless reboot and cron acceptance test separately on the user's Pi; an ARM CI runner is not a substitute for that test. Determine a realistic supported matrix and any platform exceptions from actual results before declaring support or changing current compatibility. No CI workflow changes or new platform support have been implemented yet.
+
+## Decisions and acceptance gates
+
+- The user agreed to a plaintext TOML credentials file with `username` and `password` under `[ankiweb]`, automatic Linux mode checks and user-managed access restrictions on Windows/macOS without automatic permission checks.
+- **Decided:** the command may complete when all available checks pass, even though a consistent and complete snapshot cannot be proven. Document the residual uncertainty; detected changes and failed checks still fail the attempt and trigger a retry. Define the required checks in the detailed plan; a required check that fails or cannot run must not be silently treated as passed.
+- **Decided:** build a small custom protocol client using existing HTTP and compression libraries, with the required orchestration and explicit control of allowed requests and redirects. The proposed libraries and interfaces are in `ankiweb-backup-detailed-design.md` and still require review and validation.
+- **Decided:** assume there are no legacy media names that current Anki cannot export without normalization; special handling is out of scope for now. If encountered, fail clearly without silently renaming or omitting media. The user also accepted failing clearly if otherwise valid distinct names collide on the executing filesystem; preserve them on systems where they can coexist.
+- **Acceptance still required:** actual AnkiWeb shard/reader test using an agreed separate synthetic account; current Anki Desktop restoration; real headless Raspberry Pi reboot and cron execution; supported Anki/Python/platform matrix; complete test suite and >=80% coverage.
+- If any requirement cannot be met, document the precise gap and alternatives and obtain user agreement before changing it. The temporary feasibility probes do not substitute for durable tests of the final implementation.

@@ -1,11 +1,18 @@
 import getpass
 import json
+import math
 import sys
 from pathlib import Path
 
 import click
 
 from ankiweb_cli import sync as sync_mod
+from ankiweb_cli.ankiweb_backup import (
+    PublicationUncertainError,
+    PublicationUnknownError,
+    run_backup,
+)
+from ankiweb_cli.backup_credentials import load_credentials
 from ankiweb_cli.collection import open_collection
 from ankiweb_cli.commands.audit import audit_collection
 from ankiweb_cli.commands.backup import list_backups, restore_backup
@@ -36,6 +43,70 @@ from ankiweb_cli.paths import BACKUPS_DIR, COLLECTION_FILE, CONFIG_FILE, ensure_
 @click.version_option()
 def main() -> None:
     """Headless CLI for AnkiWeb."""
+
+
+class BackupCommand(click.Command):
+    """Keep backup option errors on stdout without echoing untrusted values."""
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        try:
+            return super().parse_args(ctx, args)
+        except click.UsageError:
+            click.echo("Error: Invalid or missing backup options. See ankiweb-backup --help.")
+            raise click.exceptions.Exit(2) from None
+
+
+def _finite_retry_delay(ctx: click.Context, param: click.Parameter, value: float) -> float:
+    if not math.isfinite(value) or value < 5:
+        raise click.BadParameter("Must be a finite number of at least 5 seconds")
+    return value
+
+
+@main.command("ankiweb-backup", cls=BackupCommand)
+@click.option(
+    "--output-dir", required=True, type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Existing directory for the completed collection package.",
+)
+@click.option(
+    "--credentials-file", required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="TOML file with AnkiWeb credentials.",
+)
+@click.option("--attempts", type=click.IntRange(min=1), default=3, show_default=True)
+@click.option(
+    "--max-retry-delay", type=float, default=60, show_default=True, callback=_finite_retry_delay
+)
+def ankiweb_backup_cmd(
+    output_dir: Path, credentials_file: Path, attempts: int, max_retry_delay: float
+) -> None:
+    """Download a verified collection package and media from AnkiWeb."""
+    try:
+        credentials = load_credentials(credentials_file)
+    except ValueError:
+        click.echo("Error: Could not load the credentials file.")
+        raise click.exceptions.Exit(1) from None
+
+    def output(message: str) -> None:
+        for secret in sorted((credentials.username, credentials.password), key=len, reverse=True):
+            if secret:
+                message = message.replace(secret, "[redacted]")
+        click.echo(message)
+
+    try:
+        result = run_backup(output_dir, credentials, attempts, max_retry_delay, output)
+    except PublicationUncertainError as error:
+        output(f"Error: Publication outcome is uncertain: {error.path}")
+        raise click.exceptions.Exit(1) from None
+    except PublicationUnknownError as error:
+        output(
+            f"Error: Publication outcome is uncertain; inspect output directory: {error.output_dir}"
+        )
+        output(f"Temporary workspace preserved: {error.workspace}")
+        raise click.exceptions.Exit(1) from None
+    except Exception:
+        output("Error: Backup failed.")
+        raise click.exceptions.Exit(1) from None
+    output(str(result))
 
 
 @main.group()

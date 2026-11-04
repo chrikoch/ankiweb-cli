@@ -216,3 +216,77 @@ def test_restore_missing_snapshot_reports_error_without_overwrite(monkeypatch, t
     assert result.exit_code == 0  # Current CLI reports this failure in JSON.
     assert json.loads(result.output)["status"] == "error"
     assert target.read_bytes() == b"current"
+
+
+def test_ankiweb_backup_help_lists_required_options_and_defaults():
+    result = CliRunner().invoke(main, ["ankiweb-backup", "--help"])
+    assert result.exit_code == 0
+    assert "--output-dir" in result.stdout and "--credentials-file" in result.stdout
+    assert "--attempts" in result.stdout and "--max-retry-delay" in result.stdout
+    assert "3" in result.stdout and "60" in result.stdout
+
+
+@pytest.mark.parametrize("arguments", [
+    [], ["--output-dir", "missing", "--credentials-file", "missing"],
+    ["--attempts", "0"], ["--attempts", "-1"], ["--attempts", "not-a-number"],
+    ["--max-retry-delay", "4"], ["--max-retry-delay", "nan"],
+    ["--unknown", "synthetic-password"],
+])
+def test_ankiweb_backup_argument_errors_are_stdout_and_redacted(tmp_path, arguments):
+    credentials = tmp_path / "credentials.toml"
+    credentials.write_text('[ankiweb]\nusername="u"\npassword="p"\n')
+    credentials.chmod(0o600)
+    base = ["ankiweb-backup", "--output-dir", str(tmp_path), "--credentials-file", str(credentials)]
+    args = ["ankiweb-backup"] if not arguments else base + arguments
+    result = CliRunner().invoke(main, args)
+    assert result.exit_code != 0
+    assert "Error" in result.stdout
+    assert result.stderr == ""
+    assert "synthetic-password" not in result.stdout
+
+
+def test_ankiweb_backup_cli_progress_and_result(tmp_path, monkeypatch):
+    from ankiweb_cli import cli
+
+    credentials = tmp_path / "credentials.toml"
+    credentials.write_text('[ankiweb]\nusername="fake-user"\npassword="fake-secret"\n')
+    credentials.chmod(0o600)
+    target = tmp_path / "backup.colpkg"
+
+    def fake_run(output_dir, creds, attempts, max_retry_delay, report):
+        assert output_dir == tmp_path
+        assert creds.username == "fake-user" and creds.password == "fake-secret"
+        assert attempts == 3 and max_retry_delay == 60
+        report("unreferenced.mp3")
+        report("attempt 1 failed")
+        return target
+
+    monkeypatch.setattr(cli, "run_backup", fake_run)
+    result = CliRunner().invoke(main, [
+        "ankiweb-backup", "--output-dir", str(tmp_path), "--credentials-file", str(credentials)
+    ])
+    assert result.exit_code == 0
+    assert all(
+        text in result.stdout for text in ("unreferenced.mp3", "attempt 1 failed", str(target))
+    )
+    assert "fake-secret" not in result.output and result.stderr == ""
+
+
+def test_ankiweb_backup_cli_failure_redacts_secret(tmp_path, monkeypatch):
+    from ankiweb_cli import cli
+
+    credentials = tmp_path / "credentials.toml"
+    credentials.write_text('[ankiweb]\nusername="fake-user"\npassword="fake-secret"\n')
+    credentials.chmod(0o600)
+
+    def fake_run(*args, **kwargs):
+        raise RuntimeError("fake-secret fake-user synthetic-hkey")
+
+    monkeypatch.setattr(cli, "run_backup", fake_run)
+    result = CliRunner().invoke(main, [
+        "ankiweb-backup", "--output-dir", str(tmp_path), "--credentials-file", str(credentials)
+    ])
+    assert result.exit_code != 0
+    assert "Error" in result.stdout and result.stderr == ""
+    assert "fake-secret" not in result.output and "fake-user" not in result.output
+    assert "synthetic-hkey" not in result.output

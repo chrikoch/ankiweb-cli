@@ -41,3 +41,11 @@ All six assertions passed. The probe scripts under `/tmp` are temporary and may 
 ## Decision following investigation
 
 The user agreed that a backup may complete when all available checks pass, even though a consistent and complete snapshot cannot be proven. Document the residual uncertainty. Detected changes, request failures and failed integrity or completeness checks still fail the attempt and trigger a retry according to the requirements.
+
+## Implemented local integration checks
+
+On 2026-11-04, the implemented integration tests passed on Linux x86_64/Python 3.13.5 with both Anki 24.11 and 26.9.3: 12 tests per version. They provision a disposable local Anki server using synthetic data, then exercise the actual backup code through an allowlisting proxy. They cover a simulated 308 redirect, rejected upload and ordinary-sync endpoints, recovery from a temporary server failure, exhaustion without a published package, two ambiguous-publication outcomes, and restoration of a synthetic collection with referenced and unreferenced media.
+
+An additional test runs the backup in a Bubblewrap network namespace with no direct IP access to the server; its only route to the local server is the proxy's Unix socket. A direct TCP connection to the server is verified to fail, and the proxy records the allowed requests during a failure and retry. Other integration scenarios use the injected TCP proxy without that separate process isolation. The default sandbox denied loopback sockets; the reported runs used a local sandbox exception. Linux Bubblewrap is required for the isolated-process test, and a skip on another platform is not evidence that this check passed there.
+
+These local tests do not verify actual AnkiWeb redirects, proprietary server behavior, complete remote media indexing, or an atomic collection-and-media snapshot. The separate AnkiWeb, Desktop and target-platform acceptance checks remain open.

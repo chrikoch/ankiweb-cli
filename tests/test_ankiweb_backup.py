@@ -40,7 +40,7 @@ def snapshot(tmp_path):
     source.close()
     server = SyntheticAnkiServer()
     server.collection = source_path.read_bytes()
-    with sqlite3.connect(source_path) as connection:
+    with closing(sqlite3.connect(source_path)) as connection:
         mod, scm, usn = connection.execute("select mod, scm, usn from col").fetchone()
     metadata = {"mod": mod, "scm": scm, "usn": usn, "cont": True}
     server.routes["/sync/meta"] = lambda *_: server.json_response(metadata)
@@ -88,7 +88,31 @@ def test_verified_package_restores_collection_and_all_media(snapshot, tmp_path):
         restored.close()
     paths = [request.url.path for request in server.requests]
     assert paths.index("/msync/begin") < paths.index("/sync/download")
-    assert paths.index("/msync/mediaSanity") < paths.index("/sync/meta")
+    assert paths.index("/sync/meta") < paths.index("/sync/download")
+    assert paths.index("/msync/mediaSanity") < max(
+        index for index, path in enumerate(paths) if path == "/sync/meta"
+    )
+
+
+def test_resolves_shard_before_collection_download(snapshot):
+    reader, server, workspace, metadata, _ = snapshot
+
+    def redirect_meta(request, payload, header):
+        if request.url.host == "sync.ankiweb.net":
+            return httpx.Response(308, headers={"Location": "https://sync15.ankiweb.net/"})
+        return server.json_response(metadata)
+
+    def download(request, payload, header):
+        if request.url.host == "sync.ankiweb.net":
+            return httpx.Response(303)
+        return server.response(server.collection)
+
+    server.routes["/sync/meta"] = redirect_meta
+    server.routes["/sync/download"] = download
+    package = create_verified_package(reader, workspace, lambda _: None)
+    assert package.is_file()
+    downloads = [request for request in server.requests if request.url.path == "/sync/download"]
+    assert len(downloads) == 1 and downloads[0].url.host == "sync15.ankiweb.net"
 
 
 @pytest.mark.parametrize("field", ["mod", "scm", "usn"])

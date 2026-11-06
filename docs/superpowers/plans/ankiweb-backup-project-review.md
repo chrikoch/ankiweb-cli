@@ -31,3 +31,9 @@ On 2026-11-02, before implementation changes, an isolated `uv run --no-project -
 The report measured `cli.py` at 35% (224 of 344 statements missed), `sync.py` at 41% (40 of 68 missed), and the local snapshot module at 97% (1 of 34 missed). The report lists login, regular sync and full sync among uncovered paths. Statement coverage does not establish branch coverage, protocol safety, or correctness; tests for those behaviors remain necessary.
 
 After adding regression tests and isolated CLI integration tests, the same coverage scope and Python environment yielded **77 passed** and **83% statement coverage** (775 statements, 128 missed); `cli.py` reached 68% and `sync.py` 97%. The tests exercise actual temporary collections, including confirmation, bulk import, move, rename, delete and preservation of cards. This is a subsequent measurement, not a replacement for the original 63% baseline.
+
+## Phase 3 regression checks
+
+On 2026-11-06, the full suite ran on Linux with Python 3.13.5, Anki 26.9.3, pytest 9.2.0 and pytest-cov 7.1.0. With local loopback available, **224 tests passed**, with none skipped and **86% package statement coverage** (1,400 statements, 189 missed). This compares with 77 tests and 83% before implementation; the scope now includes the new backup modules. Coverage alone does not prove behavior or branch coverage. The first sandboxed run skipped 13 network tests; the unrestricted local-loopback rerun included them. Ruff passed on `src` and `tests`.
+
+Strict `mypy src/ankiweb_cli` reported 49 errors in six existing files. A comparison against the recorded pre-implementation mypy baseline, normalizing paths and line numbers, found the same 49 error messages with no additions or removals. The full-project mypy check therefore remains nonzero due to pre-existing errors; the new backup modules introduce no additional reported errors in this environment.

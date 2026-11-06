@@ -5,6 +5,7 @@ import json
 import re
 import secrets
 import shutil
+import sys
 import tempfile
 import unicodedata
 import zipfile
@@ -15,6 +16,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 import zstandard
+from anki import buildinfo
 
 _ALLOWED_PATHS = frozenset({
     "/sync/hostKey", "/sync/meta", "/sync/download", "/msync/begin",
@@ -23,6 +25,11 @@ _ALLOWED_PATHS = frozenset({
 _VERSION = 11
 _CLIENT_VERSION = "ankiweb-cli"
 _MAX_REDIRECTS = 5
+
+
+def _anki_client_version() -> str:
+    platform = {"darwin": "macos", "win32": "windows"}.get(sys.platform, sys.platform)
+    return f"anki,{buildinfo.version} ({buildinfo.buildhash}),{platform}"
 
 
 class AnkiWebReaderError(RuntimeError):
@@ -157,7 +164,9 @@ class AnkiWebReader:
 
     def collection_meta(self) -> CollectionMeta:
         try:
-            data = json.loads(self._request("/sync/meta", {"v": _VERSION, "cv": _CLIENT_VERSION}))
+            data = json.loads(
+                self._request("/sync/meta", {"v": _VERSION, "cv": _anki_client_version()})
+            )
             values = [data[name] for name in ("mod", "scm", "usn")]
             if any(type(value) is not int for value in values) or data.get("cont") is not True:
                 raise ValueError

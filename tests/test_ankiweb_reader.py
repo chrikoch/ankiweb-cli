@@ -29,6 +29,18 @@ def test_login_metadata_and_streamed_collection(reader, server, tmp_path):
     ]
 
 
+def test_collection_metadata_uses_installed_anki_client_version(reader, server):
+    from anki import buildinfo
+
+    def check_version(request, payload, header):
+        assert payload["cv"].startswith(f"anki,{buildinfo.version} ({buildinfo.buildhash}),")
+        return server.json_response({"mod": 1, "scm": 2, "usn": 3, "cont": True})
+
+    server.routes["/sync/meta"] = check_version
+    reader.login("synthetic-user", "synthetic-password")
+    assert reader.collection_meta() == CollectionMeta(mod=1, scm=2, usn=3)
+
+
 def test_redirect_to_trusted_shard_is_reused(reader, server, tmp_path):
     def redirect(request, payload, header):
         if request.url.host == "sync.ankiweb.net":

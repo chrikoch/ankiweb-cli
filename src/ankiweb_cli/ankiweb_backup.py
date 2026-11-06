@@ -155,6 +155,9 @@ def create_verified_package(
 ) -> Path:
     collection_path = workspace / "collection.anki2"
     package_path = workspace / "verified.colpkg"
+    # AnkiWeb redirects metadata requests to the account's shard. The general
+    # endpoint may reject a direct full download instead of redirecting it.
+    reader.collection_meta()
     media_start = reader.media_usn()
     reader.download_collection(collection_path)
     original_meta = _collection_metadata(collection_path)

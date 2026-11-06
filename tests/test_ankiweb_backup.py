@@ -375,7 +375,8 @@ def test_exclusive_copy_failure_reports_partial_file(tmp_path, monkeypatch):
     assert package.read_bytes() == b"complete package"
 
 
-def test_copy_failure_does_not_delete_a_replaced_file(tmp_path, monkeypatch):
+@pytest.mark.parametrize("deny_unlink", [False, True])
+def test_copy_failure_does_not_delete_a_replaced_file(tmp_path, monkeypatch, deny_unlink):
     import errno
     import os
     import shutil
@@ -386,13 +387,20 @@ def test_copy_failure_does_not_delete_a_replaced_file(tmp_path, monkeypatch):
     package.write_bytes(b"complete package")
     replacement = tmp_path / "existing.colpkg"
     replacement.write_bytes(b"preserve this backup")
+    blocked = []
 
     def unsupported(*args, **kwargs):
         raise OSError(errno.EOPNOTSUPP, "unsupported")
 
     def replace_then_fail(source, target, length=0):
         path = Path(target.name)
-        path.unlink()
+        try:
+            if deny_unlink:
+                raise PermissionError("synthetic open-file restriction")
+            path.unlink()
+        except PermissionError:
+            blocked.append(True)
+            raise
         os.replace(replacement, path)
         raise OSError(errno.EIO, "synthetic failure")
 
@@ -400,7 +408,11 @@ def test_copy_failure_does_not_delete_a_replaced_file(tmp_path, monkeypatch):
     monkeypatch.setattr(shutil, "copyfileobj", replace_then_fail)
     with pytest.raises(PublicationUncertainError) as error:
         publish_package(package, tmp_path)
-    assert error.value.path.read_bytes() == b"preserve this backup"
+    if blocked:
+        assert replacement.read_bytes() == b"preserve this backup"
+        assert error.value.path.read_bytes() == b""
+    else:
+        assert error.value.path.read_bytes() == b"preserve this backup"
 
 
 def test_warnings_as_errors_do_not_hide_successful_publication(tmp_path, monkeypatch):

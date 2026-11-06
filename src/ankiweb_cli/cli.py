@@ -70,16 +70,25 @@ def _finite_retry_delay(ctx: click.Context, param: click.Parameter, value: float
 @click.option(
     "--credentials-file", required=True,
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="TOML file with AnkiWeb credentials.",
+    help="Use a plaintext TOML credentials file; on Linux restrict access to 0600.",
 )
-@click.option("--attempts", type=click.IntRange(min=1), default=3, show_default=True)
 @click.option(
-    "--max-retry-delay", type=float, default=60, show_default=True, callback=_finite_retry_delay
+    "--attempts", type=click.IntRange(min=1), default=3, show_default=True,
+    help="Maximum backup attempts (at least 1).",
+)
+@click.option(
+    "--max-retry-delay", type=float, default=60, show_default=True, callback=_finite_retry_delay,
+    help="Maximum retry delay in seconds (at least 5).",
 )
 def ankiweb_backup_cmd(
     output_dir: Path, credentials_file: Path, attempts: int, max_retry_delay: float
 ) -> None:
-    """Download a verified collection package and media from AnkiWeb."""
+    """Back up data already synced to AnkiWeb to a collection package.
+
+    Uses read-only requests and checks consistency; this is not a guarantee
+    against every concurrent change. Credentials and account settings are
+    excluded. See the README for setup, limitations and restoration.
+    """
     try:
         credentials = load_credentials(credentials_file)
     except ValueError:

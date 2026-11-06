@@ -1,6 +1,6 @@
 # AnkiWeb acceptance: preparation
 
-Status: **completed for the tested synthetic account and versions** on 2026-11-05. This is evidence for the observed AnkiWeb session, not a guarantee for all accounts, client versions or future server behavior. The Desktop and target-platform acceptance points remain open.
+Status: **completed for the tested synthetic account and versions** on 2026-11-05. This is evidence for the observed AnkiWeb session, not a guarantee for all accounts, client versions or future server behavior. See the implementation plan for the current status of the separate Desktop and target-platform acceptance points.
 
 ## Proposed fixture and run
 

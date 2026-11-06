@@ -224,6 +224,13 @@ def test_ankiweb_backup_help_lists_required_options_and_defaults():
     assert "--output-dir" in result.stdout and "--credentials-file" in result.stdout
     assert "--attempts" in result.stdout and "--max-retry-delay" in result.stdout
     assert "3" in result.stdout and "60" in result.stdout
+    help_text = " ".join(result.stdout.split())
+    assert "already synced to AnkiWeb" in help_text
+    assert "plaintext TOML" in help_text
+    assert "Linux" in help_text and "0600" in help_text
+    assert "read-only" in help_text
+    assert "not a guarantee" in help_text
+    assert "seconds" in help_text and "at least 5" in help_text
 
 
 @pytest.mark.parametrize("arguments", [

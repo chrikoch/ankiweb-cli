@@ -126,6 +126,62 @@ failure instead of being silently renamed or overwritten.
 If a package contains names that differ only in case, restoring it on a
 case-insensitive filesystem may not preserve both files.
 
+### Run the backup in Docker
+
+The public image contains Python and the CLI, so the host only needs Docker
+and does not need Python or a virtual environment. The image runs the same
+`ankiweb-cli`; the backup behavior and limitations above also apply here.
+First create the credentials file and output directory as described above. On
+Linux, the credentials file must be a regular file readable by the chosen user
+and have no group or other permission bits (for example, mode `0600`). It
+remains plaintext on the host; protect it and exclude it from file backups.
+
+Pull and run the public image with absolute host paths:
+
+```sh
+docker pull ghcr.io/chrikoch/ankiweb-cli:latest
+docker run --rm --user "$(id -u):$(id -g)" \
+  --mount "type=bind,src=$HOME/.config/ankiweb-cli/backup-credentials.toml,dst=/credentials.toml,readonly" \
+  --mount "type=bind,src=$HOME/ankiweb-backups,dst=/backups" \
+  ghcr.io/chrikoch/ankiweb-cli:latest ankiweb-backup \
+  --credentials-file /credentials.toml --output-dir /backups
+```
+
+The host output directory must already exist and be writable by the mapped
+user. The credentials mount is read-only, while the output mount is writable;
+completed backups remain on the host after `--rm` removes the container. The
+command prints progress, filenames and errors to standard output and exits
+nonzero on failure. Schedule this command on the host and monitor its output
+and exit status; the image does not run a scheduler. Protect any logs because
+they contain media filenames and paths.
+
+The example uses the host UID and GID. Filesystem permissions and user mapping
+can differ with rootless Docker, user namespaces, Docker Desktop and host ACLs;
+check that the container can read the protected credentials and write the
+output without loosening access. The command checks Linux permission bits, not
+Windows or macOS ACLs. Synthetic container tests have passed on Linux AMD64 and
+ARM64 GitHub runners and on Docker Desktop/WSL2; a Raspberry Pi, cron and
+post-restart execution remain unverified. See the
+[container acceptance record](docs/superpowers/plans/container-backup-acceptance.md)
+for the tested combinations and remaining limits.
+
+`latest` moves to the most recent successfully published main revision. A
+full-commit-SHA tag identifies a specific revision; pin the manifest digest
+to select an exact image, for example:
+
+```sh
+docker pull ghcr.io/chrikoch/ankiweb-cli:6b843b88336ccc27a0dc7b3afaf3db5c027adf84
+docker pull ghcr.io/chrikoch/ankiweb-cli@sha256:7319c9309cce6c1a5e340c2fa4460673091ca3256cd33ce8c19ddd544496b499
+```
+
+To run the pinned image, use that same digest reference in place of
+`ghcr.io/chrikoch/ankiweb-cli:latest` in the `docker run` command.
+
+The package and tags are public; do not put credentials or collection data in
+an image. To build locally from a checkout instead of pulling, run
+`docker build -t ankiweb-cli:local .` and replace the image name in the run
+example with `ankiweb-cli:local`.
+
 ### Restore a package
 
 In Anki Desktop, select **File → Import** and choose the `.colpkg`. Importing a

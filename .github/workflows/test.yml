@@ -27,6 +27,8 @@ jobs:
       - run: python -m pytest -v
 
   container:
+    env:
+      IMAGE_TAG: ankiweb-cli:ci-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -45,31 +47,33 @@ jobs:
       - name: Build image for this revision
         env:
           SOURCE_REVISION: ${{ github.sha }}
-        run: docker build --label "org.opencontainers.image.revision=$SOURCE_REVISION" -t ankiweb-cli:ci .
+        run: docker build --label "org.opencontainers.image.revision=$SOURCE_REVISION" -t "$IMAGE_TAG" .
       - name: Check image architecture and CLI
         env:
           EXPECTED_ARCH: ${{ matrix.arch }}
         run: |
-          test "$(docker image inspect ankiweb-cli:ci --format '{{.Architecture}}')" = "$EXPECTED_ARCH"
-          docker run --rm ankiweb-cli:ci --help
-          docker run --rm ankiweb-cli:ci ankiweb-backup --help
-          if docker run --rm ankiweb-cli:ci ankiweb-backup --invalid-option; then exit 1; fi
-          docker run --rm --entrypoint python ankiweb-cli:ci -c 'import importlib.metadata, platform; print(platform.python_version(), importlib.metadata.version("anki"), platform.machine())'
+          test "$(docker image inspect "$IMAGE_TAG" --format '{{.Architecture}}')" = "$EXPECTED_ARCH"
+          docker run --rm "$IMAGE_TAG" --help
+          docker run --rm "$IMAGE_TAG" ankiweb-backup --help
+          if docker run --rm "$IMAGE_TAG" ankiweb-backup --invalid-option; then exit 1; fi
+          docker run --rm --entrypoint python "$IMAGE_TAG" -c 'import importlib.metadata, platform; print(platform.python_version(), importlib.metadata.version("anki"), platform.machine())'
       - name: Check mounts and synthetic backup
         env:
-          ANKIWEB_CONTAINER_IMAGE: ankiweb-cli:ci
+          ANKIWEB_CONTAINER_IMAGE: ${{ format('ankiweb-cli:ci-{0}', matrix.arch) }}
         run: python -m pytest -v tests/test_container_mounts.py tests/test_container_backup_integration.py
 
       - name: Save the tested image
         run: |
-          docker image inspect ankiweb-cli:ci --format '{{.Id}}' > "$RUNNER_TEMP/image-id.txt"
-          docker save -o "$RUNNER_TEMP/image.tar" ankiweb-cli:ci
+          docker image inspect "$IMAGE_TAG" --format '{{json .Config}} {{json .RootFS.Layers}} {{.Os}} {{.Architecture}}' > "$RUNNER_TEMP/image-metadata.txt"
+          docker save -o "$RUNNER_TEMP/image.tar" "$IMAGE_TAG"
+          sha256sum "$RUNNER_TEMP/image.tar" | cut -d ' ' -f 1 > "$RUNNER_TEMP/image-sha256.txt"
       - uses: actions/upload-artifact@v4
         with:
           name: container-image-${{ matrix.arch }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/image.tar
-            ${{ runner.temp }}/image-id.txt
+            ${{ runner.temp }}/image-metadata.txt
+            ${{ runner.temp }}/image-sha256.txt
           compression-level: 0
           if-no-files-found: error
           retention-days: 1
@@ -104,11 +108,15 @@ jobs:
         run: |
           set -euo pipefail
           for arch in amd64 arm64; do
-            docker load -i "images/container-image-$arch-$RUN_ATTEMPT/image.tar"
-            test "$(docker image inspect ankiweb-cli:ci --format '{{.Id}}')" = "$(cat "images/container-image-$arch-$RUN_ATTEMPT/image-id.txt")"
-            test "$(docker image inspect ankiweb-cli:ci --format '{{.Architecture}}')" = "$arch"
-            test "$(docker image inspect ankiweb-cli:ci --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_REVISION"
-            docker tag ankiweb-cli:ci "$IMAGE:$SOURCE_REVISION-$arch"
+            artifact="images/container-image-$arch-$RUN_ATTEMPT"
+            image_tag="ankiweb-cli:ci-$arch"
+            test "$(sha256sum "$artifact/image.tar" | cut -d ' ' -f 1)" = "$(cat "$artifact/image-sha256.txt")"
+            docker load -i "$artifact/image.tar"
+            docker image inspect "$image_tag" --format '{{json .Config}} {{json .RootFS.Layers}} {{.Os}} {{.Architecture}}' > "$RUNNER_TEMP/loaded-metadata.txt"
+            cmp "$artifact/image-metadata.txt" "$RUNNER_TEMP/loaded-metadata.txt"
+            test "$(docker image inspect "$image_tag" --format '{{.Architecture}}')" = "$arch"
+            test "$(docker image inspect "$image_tag" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_REVISION"
+            docker tag "$image_tag" "$IMAGE:$SOURCE_REVISION-$arch"
           done
           for arch in amd64 arm64; do
             docker push "$IMAGE:$SOURCE_REVISION-$arch" | tee "$RUNNER_TEMP/push-$arch.log"

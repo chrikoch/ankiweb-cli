@@ -138,6 +138,8 @@ jobs:
             echo "Skipping latest: this revision is no longer the tip of main."
             exit 0
           fi
-          digest=$(docker buildx imagetools inspect "$IMAGE:$SOURCE_REVISION" | awk '$1 == "Digest:" {print $2; exit}')
+          echo "Verified candidate is the current main revision."
+          docker buildx imagetools inspect "$IMAGE:$SOURCE_REVISION" > "$RUNNER_TEMP/manifest-inspect.txt"
+          digest=$(awk '$1 == "Digest:" {print $2; exit}' "$RUNNER_TEMP/manifest-inspect.txt")
           test -n "$digest"
           docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE@$digest"

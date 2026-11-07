@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
@@ -39,7 +42,10 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m pip install ".[dev]"
-      - run: docker build -t ankiweb-cli:ci .
+      - name: Build image for this revision
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+        run: docker build --label "org.opencontainers.image.revision=$SOURCE_REVISION" -t ankiweb-cli:ci .
       - name: Check image architecture and CLI
         env:
           EXPECTED_ARCH: ${{ matrix.arch }}
@@ -53,3 +59,77 @@ jobs:
         env:
           ANKIWEB_CONTAINER_IMAGE: ankiweb-cli:ci
         run: python -m pytest -v tests/test_container_mounts.py tests/test_container_backup_integration.py
+
+      - name: Save the tested image
+        run: |
+          docker image inspect ankiweb-cli:ci --format '{{.Id}}' > "$RUNNER_TEMP/image-id.txt"
+          docker save -o "$RUNNER_TEMP/image.tar" ankiweb-cli:ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: container-image-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/image.tar
+            ${{ runner.temp }}/image-id.txt
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, container]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: container-backup-publication
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: container-image-*-${{ github.run_attempt }}
+          path: images
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push the tested images and create the revision manifest
+        env:
+          IMAGE: ghcr.io/chrikoch/ankiweb-cli
+          SOURCE_REVISION: ${{ github.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            docker load -i "images/container-image-$arch-$RUN_ATTEMPT/image.tar"
+            test "$(docker image inspect ankiweb-cli:ci --format '{{.Id}}')" = "$(cat "images/container-image-$arch-$RUN_ATTEMPT/image-id.txt")"
+            test "$(docker image inspect ankiweb-cli:ci --format '{{.Architecture}}')" = "$arch"
+            test "$(docker image inspect ankiweb-cli:ci --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_REVISION"
+            docker tag ankiweb-cli:ci "$IMAGE:$SOURCE_REVISION-$arch"
+          done
+          for arch in amd64 arm64; do
+            docker push "$IMAGE:$SOURCE_REVISION-$arch" | tee "$RUNNER_TEMP/push-$arch.log"
+            digest=$(sed -nE 's/.*digest: (sha256:[0-9a-f]{64}).*/\1/p' "$RUNNER_TEMP/push-$arch.log" | tail -n 1)
+            test -n "$digest"
+            printf '%s\n' "$IMAGE@$digest" > "$RUNNER_TEMP/reference-$arch.txt"
+          done
+          docker buildx imagetools create --tag "$IMAGE:$SOURCE_REVISION" \
+            "$(cat "$RUNNER_TEMP/reference-amd64.txt")" "$(cat "$RUNNER_TEMP/reference-arm64.txt")"
+      - name: Update latest only for the current main revision
+        env:
+          IMAGE: ghcr.io/chrikoch/ankiweb-cli
+          SOURCE_REVISION: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [ "$current" != "$SOURCE_REVISION" ]; then
+            echo "Skipping latest: this revision is no longer the tip of main."
+            exit 0
+          fi
+          digest=$(docker buildx imagetools inspect "$IMAGE:$SOURCE_REVISION" | awk '$1 == "Digest:" {print $2; exit}')
+          test -n "$digest"
+          docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE@$digest"

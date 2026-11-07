@@ -96,7 +96,8 @@ def test_redirect_download_and_restore_from_local_anki(local_anki, backup_setup,
     reports = []
     result = backup.run_backup(output, credentials, 3, 60, reports.append)
     assert result.is_file() and delays == []
-    assert {"referenced.png", "unreferenced.mp3"} <= set(reports)
+    assert {"Downloaded and verified media: referenced.png",
+            "Downloaded and verified media: unreferenced.mp3"} <= set(reports)
     assert ("sync.ankiweb.net", "/msync/begin") in local_anki.events
     assert ("sync15.ankiweb.net", "/msync/begin") in local_anki.events
     assert_download_only(local_anki)

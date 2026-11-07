@@ -29,7 +29,7 @@ def test_pagination_batches_partial_zip_unreferenced_and_progress(media_server, 
     reported = []
     changes = download_all_media(reader, tmp_path, reported.append)
     assert len(changes) == 1003
-    assert set(reported) == set(server.media)
+    assert set(reported) == {f"Downloaded and verified media: {name}" for name in server.media}
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == server.media
     requests = [request for request in server.requests if request.url.path == "/msync/mediaChanges"]
     assert len(requests) == 3

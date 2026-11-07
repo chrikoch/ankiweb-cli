@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 from click.testing import CliRunner
 
@@ -252,6 +254,32 @@ def test_ankiweb_backup_argument_errors_are_stdout_and_redacted(tmp_path, argume
     assert "synthetic-password" not in result.stdout
 
 
+@pytest.mark.parametrize(("arguments", "expected"), [
+    (["--output-dir", "/missing-output", "--credentials-file", "secret"], "--output-dir"),
+    (["--output-dir", ".", "--credentials-file", "/missing-file"], "--credentials-file"),
+    (["--attempts", "0"], "--attempts"),
+    ([], "--output-dir"),
+])
+def test_backup_option_error_identifies_option_without_echoing_value(arguments, expected):
+    result = CliRunner().invoke(main, ["ankiweb-backup", *arguments])
+    assert result.exit_code != 0
+    assert expected in result.stdout
+    assert "/missing-output" not in result.stdout
+    assert "secret" not in result.stdout
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux permission check")
+def test_backup_credentials_permission_error_explains_problem(tmp_path):
+    credentials = tmp_path / "credentials.toml"
+    credentials.write_text('[ankiweb]\nusername="user"\npassword="secret"\n')
+    credentials.chmod(0o644)
+    result = CliRunner().invoke(main, ["ankiweb-backup", "--output-dir", str(tmp_path),
+                                      "--credentials-file", str(credentials)])
+    assert result.exit_code != 0
+    assert "group or other" in result.stdout
+    assert "secret" not in result.stdout
+
+
 def test_ankiweb_backup_cli_progress_and_result(tmp_path, monkeypatch):
     from ankiweb_cli import cli
 
@@ -274,7 +302,8 @@ def test_ankiweb_backup_cli_progress_and_result(tmp_path, monkeypatch):
     ])
     assert result.exit_code == 0
     assert all(
-        text in result.stdout for text in ("unreferenced.mp3", "attempt 1 failed", str(target))
+        text in result.stdout for text in ("unreferenced.mp3", "attempt 1 failed",
+                                           f"Backup saved: {target}")
     )
     assert "fake-secret" not in result.output and result.stderr == ""
 

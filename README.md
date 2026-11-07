@@ -150,7 +150,8 @@ docker run --rm --user "$(id -u):$(id -g)" \
 The host output directory must already exist and be writable by the mapped
 user. The credentials mount is read-only, while the output mount is writable;
 completed backups remain on the host after `--rm` removes the container. The
-command prints progress, filenames and errors to standard output and exits
+command prints backup stages, downloaded and checksum-verified media filenames,
+the completed package path and errors to standard output and exits
 nonzero on failure. Schedule this command on the host and monitor its output
 and exit status; the image does not run a scheduler. Protect any logs because
 they contain media filenames and paths.

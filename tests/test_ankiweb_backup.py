@@ -58,7 +58,10 @@ def test_verified_package_restores_collection_and_all_media(snapshot, tmp_path):
     reports = []
     package = create_verified_package(reader, workspace, reports.append)
     assert package.parent == workspace
-    assert {"picture.png", "unused.mp3"}.issubset(reports)
+    assert {"Downloaded and verified media: picture.png",
+            "Downloaded and verified media: unused.mp3"}.issubset(reports)
+    assert "Downloading collection" in reports
+    assert "Creating and verifying collection package" in reports
     with zipfile.ZipFile(package) as archive:
         assert {"collection.anki21b", "meta", "media"}.issubset(archive.namelist())
     target_path = tmp_path / "restored.anki2"
@@ -532,6 +535,21 @@ def test_run_backup_retries_with_fresh_workspaces_and_bounded_delays(tmp_path, m
     assert sleeps == [5, 7, 7]
     assert any("Collection changed" in line for line in reports)
     assert "unreferenced.mp3" in reports
+
+
+def test_run_backup_reports_workspace_creation_failure(tmp_path, monkeypatch):
+    from ankiweb_cli import ankiweb_backup as backup
+    from ankiweb_cli.backup_credentials import BackupCredentials
+
+    def fail(*args, **kwargs):
+        raise PermissionError("sensitive filesystem details")
+
+    monkeypatch.setattr(backup.tempfile, "mkdtemp", fail)
+    reports = []
+    with pytest.raises(AnkiWebReaderError):
+        backup.run_backup(tmp_path, BackupCredentials("user", "password"), 1, 5, reports.append)
+    assert any("temporary workspace" in line and "output directory" in line for line in reports)
+    assert "sensitive filesystem details" not in "\n".join(reports)
 
 
 def test_run_backup_exhaustion_cleans_attempts_and_redacts_errors(tmp_path, monkeypatch):

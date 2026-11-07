@@ -51,5 +51,5 @@ def download_all_media(
                 if digest.hexdigest() != pending[name].sha1.lower():
                     raise AnkiWebReaderError("Media checksum mismatch")
                 del pending[name]
-                report(name)
+                report(f"Downloaded and verified media: {name}")
     return changes

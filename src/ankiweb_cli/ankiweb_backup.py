@@ -157,21 +157,26 @@ def create_verified_package(
     package_path = workspace / "verified.colpkg"
     # AnkiWeb redirects metadata requests to the account's shard. The general
     # endpoint may reject a direct full download instead of redirecting it.
+    report("Checking remote collection and media metadata")
     reader.collection_meta()
     media_start = reader.media_usn()
+    report("Downloading collection")
     reader.download_collection(collection_path)
     original_meta = _collection_metadata(collection_path)
     media_folder, _ = media_paths_from_col_path(str(collection_path))
     media_path = Path(media_folder)
     try:
         media_path.mkdir()
+        report("Downloading and verifying media")
         changes = download_all_media(reader, media_path, report)
+        report(f"Checking remote consistency ({len(changes)} media files)")
         if reader.media_sanity(len(changes)) is not True:
             raise AnkiWebReaderError("Media count check failed")
         if reader.media_usn() != media_start:
             raise AnkiWebReaderError("Media changed during backup")
         if reader.collection_meta() != original_meta:
             raise AnkiWebReaderError("Collection changed during backup")
+        report("Creating and verifying collection package")
         collection = Collection(str(collection_path))
         try:
             collection.export_collection_package(
@@ -338,9 +343,16 @@ def run_backup(
         preserve_workspace = False
         publication_started = False
         try:
-            workspace = Path(tempfile.mkdtemp(prefix=".ankiweb-backup-", dir=output_dir))
+            try:
+                workspace = Path(tempfile.mkdtemp(prefix=".ankiweb-backup-", dir=output_dir))
+            except OSError:
+                raise AnkiWebReaderError(
+                    "Could not create temporary workspace in output directory; "
+                    "check permissions and available space"
+                ) from None
             safe_report(f"Backup attempt {attempt} of {attempts}")
             reader = AnkiWebReader()
+            safe_report("Signing in to AnkiWeb")
             reader.login(credentials.username, credentials.password)
             package = create_verified_package(reader, workspace, safe_report)
             publication_started = True
@@ -399,6 +411,7 @@ def run_backup(
                     except Exception:
                         pass
         if attempt < attempts:
+            safe_report(f"Retrying in {min(max_retry_delay, delay):g} seconds")
             time.sleep(min(max_retry_delay, delay))
             delay = min(max_retry_delay, delay * 2)
     raise AnkiWebReaderError("Backup attempts exhausted")

@@ -51,8 +51,20 @@ class BackupCommand(click.Command):
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
         try:
             return super().parse_args(ctx, args)
-        except click.UsageError:
-            click.echo("Error: Invalid or missing backup options. See ankiweb-backup --help.")
+        except click.UsageError as error:
+            messages = {
+                "output_dir": "--output-dir must name an existing directory",
+                "credentials_file": "--credentials-file must name an existing file",
+                "attempts": "--attempts must be an integer of at least 1",
+                "max_retry_delay": (
+                    "--max-retry-delay must be a finite number of at least 5 seconds"
+                ),
+            }
+            param = getattr(error, "param", None)
+            message = messages.get(
+                getattr(param, "name", None), "Invalid or missing backup options"
+            )
+            click.echo(f"Error: {message}. See ankiweb-backup --help.")
             raise click.exceptions.Exit(2) from None
 
 
@@ -91,8 +103,16 @@ def ankiweb_backup_cmd(
     """
     try:
         credentials = load_credentials(credentials_file)
-    except ValueError:
-        click.echo("Error: Could not load the credentials file.")
+    except ValueError as error:
+        known_errors = {
+            "Credentials must be a regular file",
+            "Credentials file permits group or other access",
+            "Could not read credentials file",
+            "Credentials file must contain an ankiweb table",
+            "Credentials file must contain a nonempty username and password",
+        }
+        message = str(error) if str(error) in known_errors else "Could not load credentials file"
+        click.echo(f"Error: {message}.")
         raise click.exceptions.Exit(1) from None
 
     def output(message: str) -> None:
@@ -115,7 +135,7 @@ def ankiweb_backup_cmd(
     except Exception:
         output("Error: Backup failed.")
         raise click.exceptions.Exit(1) from None
-    output(str(result))
+    output(f"Backup saved: {result}")
 
 
 @main.group()

@@ -1,0 +1,14 @@
+*
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!README.md
+!LICENSE
+!src/
+src/*
+!src/ankiweb_cli/
+src/ankiweb_cli/*
+!src/ankiweb_cli/*.py
+!src/ankiweb_cli/commands/
+src/ankiweb_cli/commands/*
+!src/ankiweb_cli/commands/*.py

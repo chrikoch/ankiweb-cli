@@ -96,6 +96,9 @@ filenames, warnings and errors are printed to standard output; the process
 returns a nonzero exit status on failure. `--attempts` sets the maximum number
 of attempts (default 3, minimum 1). Retries begin after five seconds and use
 increasing delays capped by `--max-retry-delay` (default 60 seconds, minimum 5).
+An HTTP 403 response during login indicates that authentication was rejected;
+check the username and password. The command stops without retrying this error.
+Other HTTP errors include the status code and are retried as usual.
 If publication has an uncertain outcome, inspect the reported output path and
 preserved workspace before trying again. On filesystems without a supported
 hard-link operation, publication falls back to an exclusive copy; interruption

@@ -36,6 +36,10 @@ class AnkiWebReaderError(RuntimeError):
     """An error whose message contains no server-supplied data or credentials."""
 
 
+class AnkiWebAuthenticationError(AnkiWebReaderError):
+    """The server rejected the login credentials."""
+
+
 @dataclass(frozen=True)
 class CollectionMeta:
     mod: int
@@ -129,7 +133,14 @@ class AnkiWebReader:
                             )
                             continue
                         if response.status_code != 200:
-                            raise AnkiWebReaderError("Sync server returned an error")
+                            if path == "/sync/hostKey" and response.status_code == 403:
+                                raise AnkiWebAuthenticationError(
+                                    "AnkiWeb authentication failed (HTTP 403); "
+                                    "check username or password"
+                                )
+                            raise AnkiWebReaderError(
+                                f"Sync server returned HTTP {response.status_code}"
+                            )
                         size_header = response.headers.get("anki-original-size")
                         expected = int(size_header) if size_header is not None else None
                         if expected is not None and expected < 0:

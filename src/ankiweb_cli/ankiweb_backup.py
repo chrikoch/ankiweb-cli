@@ -26,6 +26,7 @@ from anki.media import media_paths_from_col_path
 from google.protobuf.message import DecodeError
 
 from ankiweb_cli.ankiweb_reader import (
+    AnkiWebAuthenticationError,
     AnkiWebReader,
     AnkiWebReaderError,
     CollectionMeta,
@@ -399,6 +400,8 @@ def run_backup(
                 raise PublicationUnknownError(workspace, output_dir) from None
             if isinstance(error, AnkiWebReaderError):
                 safe_report(f"Backup attempt failed: {error}")
+                if isinstance(error, AnkiWebAuthenticationError):
+                    raise
             else:
                 safe_report("Backup attempt failed: unexpected error")
         finally:

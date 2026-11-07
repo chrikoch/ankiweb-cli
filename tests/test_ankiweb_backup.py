@@ -537,6 +537,42 @@ def test_run_backup_retries_with_fresh_workspaces_and_bounded_delays(tmp_path, m
     assert "unreferenced.mp3" in reports
 
 
+@pytest.mark.parametrize("status,expected_attempts", [(403, 1), (500, 3)])
+def test_backup_reports_login_http_error_and_retries_only_when_appropriate(
+    tmp_path, monkeypatch, status, expected_attempts
+):
+    import httpx
+
+    from ankiweb_cli import ankiweb_backup as backup
+    from ankiweb_cli.ankiweb_reader import AnkiWebReader
+    from ankiweb_cli.backup_credentials import BackupCredentials
+
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(status, content=b"synthetic-password")
+
+    monkeypatch.setattr(
+        backup, "AnkiWebReader", lambda: AnkiWebReader(transport=httpx.MockTransport(respond))
+    )
+    sleeps, reports = [], []
+    monkeypatch.setattr(backup.time, "sleep", sleeps.append)
+    with pytest.raises(AnkiWebReaderError):
+        backup.run_backup(
+            tmp_path, BackupCredentials("synthetic-user", "synthetic-password"), 3, 60,
+            reports.append,
+        )
+    output = "\n".join(reports)
+    assert str(status) in output
+    assert "synthetic-password" not in output
+    assert len(requests) == expected_attempts
+    assert len(sleeps) == expected_attempts - 1
+    assert not list(tmp_path.glob(".ankiweb-backup-*"))
+    if status == 403:
+        assert "username or password" in output.lower()
+
+
 def test_run_backup_reports_workspace_creation_failure(tmp_path, monkeypatch):
     from ankiweb_cli import ankiweb_backup as backup
     from ankiweb_cli.backup_credentials import BackupCredentials

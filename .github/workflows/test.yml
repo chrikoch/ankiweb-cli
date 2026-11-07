@@ -64,7 +64,7 @@ jobs:
 
       - name: Save the tested image
         run: |
-          docker image inspect "$IMAGE_TAG" --format '{{json .Config}} {{json .RootFS.Layers}} {{.Os}} {{.Architecture}}' > "$RUNNER_TEMP/image-metadata.txt"
+          docker image inspect "$IMAGE_TAG" | jq -cS '.[0] | {config: (.Config | with_entries(select(.value != null and .value != "" and .value != false))), layers: .RootFS.Layers, os: .Os, architecture: .Architecture}' > "$RUNNER_TEMP/image-metadata.txt"
           docker save -o "$RUNNER_TEMP/image.tar" "$IMAGE_TAG"
           sha256sum "$RUNNER_TEMP/image.tar" | cut -d ' ' -f 1 > "$RUNNER_TEMP/image-sha256.txt"
       - uses: actions/upload-artifact@v4
@@ -112,7 +112,7 @@ jobs:
             image_tag="ankiweb-cli:ci-$arch"
             test "$(sha256sum "$artifact/image.tar" | cut -d ' ' -f 1)" = "$(cat "$artifact/image-sha256.txt")"
             docker load -i "$artifact/image.tar"
-            docker image inspect "$image_tag" --format '{{json .Config}} {{json .RootFS.Layers}} {{.Os}} {{.Architecture}}' > "$RUNNER_TEMP/loaded-metadata.txt"
+            docker image inspect "$image_tag" | jq -cS '.[0] | {config: (.Config | with_entries(select(.value != null and .value != "" and .value != false))), layers: .RootFS.Layers, os: .Os, architecture: .Architecture}' > "$RUNNER_TEMP/loaded-metadata.txt"
             cmp "$artifact/image-metadata.txt" "$RUNNER_TEMP/loaded-metadata.txt"
             test "$(docker image inspect "$image_tag" --format '{{.Architecture}}')" = "$arch"
             test "$(docker image inspect "$image_tag" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_REVISION"

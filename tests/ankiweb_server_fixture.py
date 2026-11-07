@@ -170,13 +170,14 @@ class LocalAnkiEnvironment:
         self.output_directory = None
         self.packages_at_failure = []
         self.note_id = None
+        self.fixture_value = None
         self.unix_socket = None
 
     def transport(self):
         return LocalAnkiTransport(self.proxy_port)
 
 
-def local_anki_environment(root, *, with_unix_proxy=False):
+def local_anki_environment(root, *, with_unix_proxy=False, provision=None):
     """Start a real local Anki server, provision synthetic data and an allowlist proxy."""
     import contextlib
     import http.client
@@ -242,6 +243,8 @@ def local_anki_environment(root, *, with_unix_proxy=False):
                 note["Back"] = "synthetic"
                 fixture.add_note(note, fixture.decks.id("Fixture::Deck"))
                 environment.note_id = note.id
+                if provision is not None:
+                    environment.fixture_value = provision(fixture, note)
                 media = Path(fixture.media.dir())
                 (media / "referenced.png").write_bytes(b"referenced bytes")
                 (media / "unreferenced.mp3").write_bytes(b"unreferenced bytes")
